@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Per Marghi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    min-height:100dvh;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    overflow:hidden;
+    background:radial-gradient(120% 90% at 50% 34%, #3d1029 0%, #1d0714 50%, #090208 100%);
+    color:#ffdbe5;
+    font-family:ui-sans-serif,system-ui,sans-serif;
+  }
+  .stage{position:relative;display:flex;justify-content:center}
+  .glow{
+    position:absolute;left:50%;top:42%;
+    width:min(95vw,860px);aspect-ratio:1;
+    transform:translate(-50%,-50%);
+    background:radial-gradient(closest-side, rgba(255,70,110,.30), rgba(255,70,110,.09) 55%, transparent 76%);
+    opacity:0;pointer-events:none;filter:blur(12px);
+  }
+  canvas{position:relative;display:block;filter:drop-shadow(0 0 6px rgba(255,90,130,.5))}
+  .msg{
+    font-family:'Great Vibes','Snell Roundhand','Segoe Script','Brush Script MT',cursive;
+    font-size:clamp(2.1rem,7.4vw,3.7rem);
+    min-height:1.35em;text-align:center;line-height:1.25;
+    letter-spacing:.02em;padding:0 1rem;
+    margin-top:clamp(.1rem,1.2vh,.9rem);
+    color:#ffdce6;
+    text-shadow:0 0 20px rgba(255,90,130,.6),0 0 3px rgba(255,205,220,.55);
+  }
+  .msg .w{display:inline-block;white-space:nowrap}
+  .msg .l{
+    display:inline-block;white-space:pre;
+    opacity:0;transform:translateY(12px) scale(.88);filter:blur(7px);
+    transition:opacity .9s ease,transform .9s cubic-bezier(.2,.8,.2,1),filter .9s ease;
+  }
+  .msg.go .l{opacity:1;transform:none;filter:none}
+  .msg .h{margin-left:.12em;font-family:system-ui,"Apple Color Emoji","Segoe UI Emoji",sans-serif;font-size:.8em;text-shadow:none}
+  .msg .h.beating{animation:beat 1.4s ease-in-out infinite}
+  @keyframes beat{
+    0%,100%{transform:scale(1)}
+    14%{transform:scale(1.22)}
+    28%{transform:scale(1)}
+    42%{transform:scale(1.14)}
+    70%{transform:scale(1)}
+  }
+  #replay{
+    position:fixed;bottom:max(14px,env(safe-area-inset-bottom));right:16px;
+    background:transparent;color:rgba(255,220,230,.65);
+    border:1px solid rgba(255,200,215,.25);border-radius:99px;
+    padding:.5em 1.1em;font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;
+    cursor:pointer;opacity:0;pointer-events:none;transition:opacity 1s ease,background .3s ease;
+  }
+  #replay.show{opacity:1;pointer-events:auto}
+  #replay:hover{background:rgba(255,120,150,.12)}
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="glow" id="glow"></div>
+    <canvas id="c" role="img" aria-label="Un bouquet di rose in stile ASCII che cresce e sboccia"></canvas>
+  </div>
+  <div class="msg" id="msg" aria-live="polite"></div>
+  <button id="replay" type="button">rivedi</button>
+
+<script>
+(() => {
+  const S = 1.5;
+  const COLS = 96, ROWS = 57;
+  const SHADE = ["@", "&", "%", "#", "*", "+", "."];
+  const FONT = 'ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Courier New",monospace';
+  const TEXT = "ti amo tanto Marghi!";
+  const T_TEXT = 10.4, T_REPLAY = 14.2;
+
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const glow = document.getElementById('glow');
+  const msg = document.getElementById('msg');
+  const btn = document.getElementById('replay');
+  let cw = 8, chh = 16, dpr = 1;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const vw = innerWidth, vh = innerHeight;
+    const reserve = Math.max(110, vh * 0.16);
+    cw = Math.max(3, Math.min(vw * 0.98 / COLS, (vh - reserve) / (ROWS * 2)));
+    chh = cw * 2;
+    cv.style.width = COLS * cw + 'px';
+    cv.style.height = ROWS * chh + 'px';
+    cv.width = Math.round(COLS * cw * dpr);
+    cv.height = Math.round(ROWS * chh * dpr);
+  }
+  addEventListener('resize', resize);
+  resize();
+
+  // ---------- griglia ----------
+  const N = COLS * ROWS;
+  const gc = new Array(N).fill('');
+  const gk = new Array(N).fill('');
+  function put(x, y, c, k) {
+    x = Math.round(x); y = Math.round(y);
+    if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return;
+    const i = y * COLS + x; gc[i] = c; gk[i] = k;
+  }
+
+  // ---------- utilità ----------
+  const clamp = (v, a = 0, b = 1) => v < a ? a : v > b ? b : v;
+  const ease3 = x => 1 - Math.pow(1 - clamp(x), 3);
+  const hsl = (h, s, l, a = 1) => `hsla(${Math.round(h)},${Math.round(s)}%,${Math.round(clamp(l, 8, 92))}%,${a})`;
+  function hash(x, y) {
+    let h = (x * 374761393 + y * 668265263) | 0;
+    h = (h ^ (h >>> 13)) * 1274126177 | 0;
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+  }
+  function rng(seed) {
+    return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  }
+  function petalChar(th) {
+    const a = (((-th + Math.PI / 2) % Math.PI) + Math.PI) % Math.PI;
+    if (a < Math.PI / 7 || a > 6 * Math.PI / 7) return Math.sin(th) > 0 ? '_' : '-';
+    if (a > 3 * Math.PI / 7 && a < 4 * Math.PI / 7) return Math.cos(th) < 0 ? '(' : ')';
+    return a < Math.PI / 2 ? '/' : '\\';
+  }
+  function dirChar(ang, flat = '~') {
+    const a = ((ang % Math.PI) + Math.PI) % Math.PI;
+    if (a < Math.PI / 8 || a > 7 * Math.PI / 8) return flat;
+    if (a < 3 * Math.PI / 8) return '/';
+    if (a < 5 * Math.PI / 8) return '|';
+    return '\\';
+  }
+
+  // ---------- geometria ----------
+  const P0x = 32 * S, P0y = 27 * S;
+  function prep(o, tx, ty) {
+    o.p1x = P0x + (tx - P0x) * 0.12; o.p1y = P0y - (P0y - ty) * 0.55;
+    o.p2x = tx; o.p2y = ty; return o;
+  }
+  const bez = (r, u) => { const a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u;
+    return [a * P0x + b * r.p1x + c * r.p2x, a * P0y + b * r.p1y + c * r.p2y]; };
+  const bezd = (r, u) => { const a = 2 * (1 - u), b = 2 * u;
+    return [a * (r.p1x - P0x) + b * (r.p2x - r.p1x), a * (r.p1y - P0y) + b * (r.p2y - r.p1y)]; };
+  const stemAng = (r, u) => { const d = bezd(r, u); return Math.atan2(-2 * d[1], d[0]); };
+
+  // ---------- rose ----------
+  const roses = [
+    { x: 32,   y: 8.5,  R: 9.2, hue: 350, s: 84, la: 2,  ph: 0.3, st: 0.9, dur: 2.6 },
+    { x: 19.5, y: 13,   R: 8.2, hue: 357, s: 86, la: 0,  ph: 1.7, st: 1.1, dur: 2.6 },
+    { x: 44.5, y: 13,   R: 8.2, hue: 336, s: 82, la: 8,  ph: 2.9, st: 1.2, dur: 2.6 },
+    { x: 9.5,  y: 20,   R: 7.2, hue: 14,  s: 72, la: 12, ph: 4.1, st: 1.5, dur: 2.7 },
+    { x: 54.5, y: 20,   R: 7.2, hue: 352, s: 86, la: 0,  ph: 5.3, st: 1.6, dur: 2.7 },
+    { x: 25,   y: 19,   R: 7.6, hue: 332, s: 80, la: 10, ph: 0.9, st: 1.9, dur: 2.7 },
+    { x: 39,   y: 19.5, R: 7.6, hue: 22,  s: 78, la: 16, ph: 2.2, st: 2.0, dur: 2.7 },
+  ];
+  roses.forEach((r, i) => {
+    r.x *= S; r.y *= S; r.R0 = r.R; r.R *= S;
+    prep(r, r.x, r.y + 0.5 * S);
+    r.leaves = [
+      { t: 0.56, side: i % 2 ? 1 : -1, L: 6.8, W: 2.2 },
+      { t: 0.76, side: i % 2 ? -1 : 1, L: 5.8, W: 1.9 },
+    ];
+    if (i === 0) r.leaves.push({ t: 0.38, side: 1, L: 7.2, W: 2.3 }, { t: 0.46, side: -1, L: 7.2, W: 2.3 });
+  });
+
+  const bigLeaves = [
+    { x: 21, y: 26, ang: 2.55, L: 12, W: 3.3, t0: 3.2 },
+    { x: 43, y: 26, ang: 0.59, L: 12, W: 3.3, t0: 3.4 },
+    { x: 26, y: 25, ang: 2.1,  L: 11, W: 2.9, t0: 3.6 },
+    { x: 38, y: 25, ang: 1.04, L: 11, W: 2.9, t0: 3.8 },
+    { x: 29, y: 26, ang: 1.8,  L: 10, W: 2.6, t0: 4.0 },
+    { x: 35, y: 26, ang: 1.34, L: 10, W: 2.6, t0: 4.1 },
+  ];
+
+  bigLeaves.forEach(b => { b.x *= S; b.y *= S; });
+
+  const gyp = [[32,1.2],[24,2.5],[40,2.5],[12,6],[52,6],[5,12],[59,12],[3,19],[61,19]]
+    .map(([x, y], i) => { x *= S; y *= S; const o = { x, y, ts: 4.0 + i * 0.2, dur: 2.0 };
+      o.p1x = P0x + (x - P0x) * 0.25; o.p1y = P0y - (P0y - y) * 0.5; o.p2x = x; o.p2y = y; return o; });
+
+  // ---------- disegno elementi ----------
+  function drawLeaf(bx, by, ang, L, W, sc, time, seed, hueShift = 0) {
+    L *= sc * S; W *= sc * S;
+    if (L < 0.9) { put(bx, by, '.', hsl(138, 40, 40)); return; }
+    const ux = Math.cos(ang), uy = Math.sin(ang), ext = L + W + 1;
+    for (let y = Math.floor(by - ext / 2); y <= Math.ceil(by + ext / 2); y++) {
+      for (let x = Math.floor(bx - ext); x <= Math.ceil(bx + ext); x++) {
+        const dx = x - bx, dy = -(y - by) * 2;
+        const a = dx * ux + dy * uy, b = -dx * uy + dy * ux;
+        if (a < 0 || a > L) continue;
+        const t = a / L;
+        const w = W * Math.pow(Math.sin(Math.PI * Math.pow(t, 0.8)), 0.9);
+        const ab = Math.abs(b);
+        if (ab > w) continue;
+        const q = w > 0 ? ab / w : 0;
+        let ch;
+        if (ab < 0.75) ch = dirChar(ang);
+        else ch = q < 0.45 ? '%' : q < 0.75 ? '*' : '+';
+        const l = 24 + 17 * t + 9 * q + 3 * Math.sin(time * 1.5 + x + y + seed);
+        put(x, y, ch, hsl(138 + hueShift - 6 * t, 40, l));
+      }
+    }
+  }
+
+  function drawStem(r, g, time) {
+    const steps = 240;
+    for (let i = 0; i <= steps; i++) {
+      const u = g * i / steps;
+      const [x, y] = bez(r, u);
+      const ang = stemAng(r, u);
+      put(x, y, dirChar(ang), hsl(136, 38, 24 + 16 * u + 2 * Math.sin(time * 1.2 + i * 0.3)));
+    }
+    if (g < 1) { const [x, y] = bez(r, g); put(x, y, 'o', hsl(110, 70, 68)); }
+  }
+
+  // rose: petali vettoriali su canvas nascosto, poi convertiti in ASCII
+  const off = document.createElement('canvas');
+  off.width = COLS * 2; off.height = ROWS * 4;
+  const oc = off.getContext('2d', { willReadFrequently: true });
+  const LAYERS = [
+    { n: 5, ring: 0.60, rx: 0.50, ry: 0.45, off: 0,           dl: -4 },
+    { n: 5, ring: 0.42, rx: 0.42, ry: 0.39, off: Math.PI / 5, dl: 0 },
+    { n: 4, ring: 0.26, rx: 0.34, ry: 0.31, off: 0.4,         dl: 4 },
+    { n: 3, ring: 0.11, rx: 0.24, ry: 0.23, off: 1.1,         dl: 8 },
+  ];
+  const ASCII = " .:;+*%#@";
+  let roseDrawn = false;
+
+  function vecRose(r, cx, cy, eb, appear, time, pulse) {
+    const Rc = r.R * (0.16 + 0.84 * eb) * appear * pulse * (eb > 0.95 ? 1 + 0.012 * Math.sin(time * 1.8 + r.ph) : 1);
+    if (Rc < 0.35) return;
+    roseDrawn = true;
+    const Rp = Rc * 2 * 0.98, stretch = 1 + 0.6 * (1 - eb), open = 0.28 + 0.72 * eb;
+    const base = 39 + r.la * 0.45, h = r.hue, sat = Math.min(92, r.s + 6);
+    oc.save();
+    oc.translate(cx * 2 + 1, cy * 4 + 2);
+    oc.scale(1, stretch);
+    LAYERS.forEach((L, i) => {
+      const rot = r.ph + i * 0.7 + time * 0.04 * (i % 2 ? -1 : 1);
+      const rxr = L.rx * Rp * (0.62 + 0.38 * eb), ryr = L.ry * Rp * (0.62 + 0.38 * eb);
+      for (let k = 0; k < L.n; k++) {
+        const ang = rot + L.off + k * 2 * Math.PI / L.n;
+        const ca = Math.cos(ang), sa = Math.sin(ang), rr = L.ring * Rp * open;
+        const ex = ca * rr, ey = sa * rr;
+        const Lb = base + L.dl;
+        const gr = oc.createLinearGradient(ex - ca * rxr, ey - sa * rxr, ex + ca * rxr, ey + sa * rxr);
+        gr.addColorStop(0, `hsl(${h + 4},${sat}%,${Lb - 14}%)`);
+        gr.addColorStop(0.5, `hsl(${h},${sat}%,${Lb + 6}%)`);
+        gr.addColorStop(1, `hsl(${h - 4},${sat - 2}%,${Lb + 18}%)`);
+        oc.beginPath(); oc.ellipse(ex, ey, rxr, ryr, ang, 0, 6.2832);
+        oc.fillStyle = gr; oc.fill();
+        oc.lineWidth = i === 0 ? 2.4 : 1.5;
+        oc.strokeStyle = i === 0 ? 'rgba(14,3,10,0.92)' : `hsla(${h},${sat}%,8%,0.95)`;
+        oc.stroke();
+      }
+    });
+    oc.beginPath(); oc.ellipse(0, 0, 0.12 * Rp, 0.12 * Rp, 0, 0, 6.2832);
+    oc.fillStyle = `hsl(${h},${sat}%,${base - 16}%)`; oc.fill();
+    oc.lineWidth = 1; oc.strokeStyle = `hsla(${h},${sat}%,${base + 20}%,0.9)`; oc.stroke();
+    oc.globalCompositeOperation = 'source-atop';
+    const hg = oc.createRadialGradient(-0.3 * Rp, -0.35 * Rp, 0, -0.3 * Rp, -0.35 * Rp, 0.85 * Rp);
+    hg.addColorStop(0, 'rgba(255,225,230,0.20)'); hg.addColorStop(1, 'rgba(255,230,235,0)');
+    oc.fillStyle = hg; oc.fillRect(-Rp * 1.3, -Rp * 1.3, Rp * 2.6, Rp * 2.6);
+    oc.globalCompositeOperation = 'source-over';
+    oc.restore();
+  }
+
+  function rasterRoses() {
+    const W = off.width, data = oc.getImageData(0, 0, W, off.height).data;
+    for (let j = 0; j < ROWS; j++) for (let i = 0; i < COLS; i++) {
+      let sa = 0, sr = 0, sg = 0, sb = 0;
+      for (let yy = 0; yy < 4; yy++) {
+        let idx = ((j * 4 + yy) * W + i * 2) * 4;
+        for (let xx = 0; xx < 2; xx++, idx += 4) {
+          const a = data[idx + 3];
+          if (a) { sa += a; sr += data[idx] * a; sg += data[idx + 1] * a; sb += data[idx + 2] * a; }
+        }
+      }
+      if (sa < 8 * 255 * 0.45) continue;
+      const r = sr / sa / 255, g = sg / sa / 255, b = sb / sa / 255;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, dd = mx - mn;
+      let h = 0, s = 0;
+      if (dd > 0) {
+        s = dd / (1 - Math.abs(2 * l - 1));
+        h = mx === r ? ((g - b) / dd + (g < b ? 6 : 0)) : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4;
+        h *= 60;
+      }
+      const idx = Math.floor(clamp((l - 0.10) / 0.42, 0, 0.999) * ASCII.length);
+      const ch = ASCII[idx];
+      if (ch === ' ') put(i, j, ' ', ''); else put(i, j, ch, hsl(h, Math.min(96, s * 100 * 1.12), l * 100 + 16));
+    }
+  }
+
+  // ---------- scena ----------
+  const rs = rng(7);
+  const stars = Array.from({ length: 80 }, () => ({
+    x: Math.floor(rs() * COLS), y: Math.floor(rs() * ROWS), ph: rs() * 6.28,
+    c: ['.', '.', '+', '*', "'"][Math.floor(rs() * 5)], hue: rs() < 0.5 ? 340 : 45 }));
+  const petals = Array.from({ length: 30 }, (_, i) => ({
+    x0: 2 + rs() * (COLS - 4), speed: (1.1 + rs() * 1.5) * S, sway: (1 + rs() * 2.2) * S, ph: rs() * 6.28,
+    start: 9 + i * 0.28, ch: ['(', ')', '~', ',', '`', '*', '.'][Math.floor(rs() * 7)],
+    hue: [345, 350, 12, 45][Math.floor(rs() * 4)] }));
+
+  const BOW = [
+    "  .~~~~.     .~~~~.  ",
+    " ( ~~~~ \\   / ~~~~ ) ",
+    "  `~~~~~ \\_/ ~~~~~'  ",
+    "        (_@_)        ",
+    "        /   \\        ",
+    "       /_/ \\_\\       ",
+  ];
+
+  function scene(t) {
+    gc.fill(''); gk.fill('');
+
+    // stelle
+    const sf = clamp(t / 2);
+    for (const s of stars) {
+      const a = (0.12 + 0.45 * (0.5 + 0.5 * Math.sin(t * 1.3 + s.ph))) * sf;
+      put(s.x, s.y, s.c, hsl(s.hue, 60, 85, a.toFixed(2)));
+    }
+
+    // seme e onda iniziale
+    if (t < 1.0) put(P0x, P0y, ['.', 'o', 'O', '*'][Math.floor(t * 10) % 4], hsl(45, 90, 72));
+    for (const off of [0.1, 0.6]) {
+      if (t > off && t < off + 1.9) {
+        const rr = (t - off) * 7 * S, a = (1 - (t - off) / 1.9).toFixed(2);
+        for (let k = 0; k < 80; k++) {
+          const th = k / 80 * 6.2832;
+          put(P0x + rr * Math.cos(th), P0y - rr * Math.sin(th) / 2, k % 2 ? '.' : 'o', hsl(45, 90, 75, a));
+        }
+      }
+    }
+
+    // grandi foglie di fondo
+    bigLeaves.forEach((b, i) => {
+      const sc = ease3((t - b.t0) / 1.5);
+      if (sc > 0) drawLeaf(b.x, b.y, b.ang, b.L, b.W, sc, t, i * 2, 4);
+    });
+
+    // gypsophila (rametti bianchi)
+    gyp.forEach((o, i) => {
+      const g = ease3((t - o.ts) / o.dur);
+      if (g <= 0) return;
+      for (let k = 0; k <= 110; k++) {
+        const u = g * k / 110, [x, y] = bez(o, u);
+        put(x, y, hash(k, i) < 0.55 ? dirChar(stemAng(o, u)) : '.', hsl(120, 28, 30 + 10 * u));
+      }
+      for (const u of [0.62, 0.78, 0.9]) if (g >= u) {
+        const [x, y] = bez(o, u);
+        put(x + 1, y, 'o', hsl(45, 60, 88)); put(x, y, '.', hsl(45, 50, 80)); put(x - 1, y - 1, '.', hsl(45, 50, 80));
+      }
+      const pf = ease3((t - (o.ts + o.dur)) / 0.9);
+      if (pf > 0.05) {
+        const cl = [[0,0,'*'],[-2,0,'o'],[2,0,'o'],[0,-1,'.'],[0,1,'.'],[-1,-1,"'"],[1,1,','],[-3,1,'.'],[3,-1,'.']];
+        const n = Math.ceil(pf * cl.length);
+        const tw = 84 + 8 * Math.sin(t * 2.4 + i * 1.7);
+        for (let k = 0; k < n; k++) put(o.x + Math.round(cl[k][0] * S), o.y + Math.round(cl[k][1] * S * 0.7), cl[k][2], hsl(42, 70, tw));
+      }
+    });
+
+    // steli, foglie, calici
+    for (const r of roses) {
+      const g = ease3((t - r.st) / r.dur);
+      r.g = g;
+      if (g <= 0) continue;
+      drawStem(r, g, t);
+      r.leaves.forEach((lf, k) => {
+        const sc = ease3((g - lf.t) / 0.25);
+        if (sc <= 0) return;
+        const [bx, by] = bez(r, lf.t);
+        drawLeaf(bx, by, stemAng(r, lf.t) + lf.side * 0.95, lf.L, lf.W, sc, t, k * 3 + r.ph);
+      });
+      const cs = ease3((t - (r.st + r.dur * 0.5)) / 1.5);
+      if (cs > 0) {
+        const [tx, ty] = bez(r, Math.min(g, 1)), a = stemAng(r, Math.min(g, 1));
+        drawLeaf(tx, ty, a + 1.9, 3.6, 1.2, cs, t, 1);
+        drawLeaf(tx, ty, a - 1.9, 3.6, 1.2, cs, t, 2);
+      }
+    }
+
+    // carta
+    const pf = ease3((t - 5.8) / 2.8);
+    const Y0 = 24 * S, Y1 = 36.5 * S, HW = 15.5 * S, CX = 32 * S;
+    if (pf > 0) {
+      const yMin = Y1 - pf * (Y1 - Y0);
+      for (let y = Math.floor(Y0 - 1); y <= Math.ceil(Y1) + 1; y++) {
+        if (y < yMin - 0.01) continue;
+        const hw = HW * (1 - (y - Y0) / (Y1 - Y0)) + 0.6;
+        for (let x = Math.floor(CX - HW - 1); x <= Math.ceil(CX + HW + 1); x++) {
+          const dx = x - CX, topY = Y0 + 1.1 * Math.sin(x * 0.4);
+          if (y < topY - 0.5 || Math.abs(dx) > hw) continue;
+          const left = dx < 0;
+          if (y >= Y1 - 1.1) { put(x, y, 'V', hsl(10, 55, 84)); continue; }
+          if (Math.abs(dx) > hw - 1.5) { put(x, y, left ? '\\' : '/', hsl(10, 55, 86)); continue; }
+          if (y < topY + 1.4) { put(x, y, '~', hsl(38, 60, 84)); continue; }
+          if (Math.abs(dx) < 0.8) { put(x, y, ':', hsl(10, 40, 92)); continue; }
+          const k = Math.round(left ? x - 1.24 * y : x + 1.24 * y);
+          if (((k % 7) + 7) % 7 === 0) put(x, y, left ? '\\' : '/', hsl(8, 38, left ? 76 : 64));
+          else if (hash(x, y) < 0.14) put(x, y, '.', hsl(8, 30, left ? 72 : 58, 0.85));
+          else put(x, y, ' ', '');
+        }
+      }
+      if (pf > 0.97) {
+        const hb = 60 + 6 * Math.sin(t * 3), hy = Math.round(Y1 - 5.2 * S), hx = Math.round(CX);
+        put(hx - 1, hy, '<', hsl(350, 82, hb)); put(hx, hy, '3', hsl(350, 82, hb));
+      }
+    }
+
+    // fiocco
+    const bt = ease3((t - 8.0) / 1.4);
+    if (bt > 0) {
+      const cx = CX, cyr = Y0 + 4.2 * S;
+      const gold = (x, y, l = 0) => hsl(42, 88, 66 + l + 8 * Math.sin(t * 3 + x * 0.4 - y * 0.3));
+      const loop = (side) => {
+        const a = 6.4 * S * 0.62 * bt, b = 5.4 * S * 0.6 * bt;
+        const lx = cx + side * 5.8 * S * 0.78 * bt, ly = cyr - 0.2 * S;
+        if (a < 1) return;
+        for (let y = Math.floor(ly - b / 2 - 1); y <= Math.ceil(ly + b / 2 + 1); y++) {
+          for (let x = Math.floor(lx - a - 1); x <= Math.ceil(lx + a + 1); x++) {
+            const nx = (x - lx) / a, ny = -(y - ly) * 2 / b, e = Math.hypot(nx, ny);
+            if (e > 1.0) continue;
+            if (e > 0.74) {
+              const phi = Math.atan2(ny, nx);
+              put(x, y, dirChar(Math.atan2(b * Math.cos(phi), -a * Math.sin(phi)), '~'), gold(x, y, 6));
+            } else put(x, y, hash(x, y) < 0.5 ? '~' : ':', gold(x, y, -14));
+          }
+        }
+      };
+      loop(-1); loop(1);
+      // code
+      for (let k = 0; k <= 12; k++) {
+        const u = k / 12 * bt, yy = cyr + 1 + u * 6.2 * S * 0.62, off = 0.6 + u * 4.4 * S * 0.7;
+        put(cx - off, yy, '/', gold(k, k)); put(cx - off + 1.5, yy, ':', gold(k, k, -12));
+        put(cx + off, yy, '\\', gold(k, k)); put(cx + off - 1.5, yy, ':', gold(k, k, -12));
+      }
+      // nodo
+      for (let y = -1; y <= 1; y++) for (let x = -2; x <= 2; x++)
+        if (x * x / 6 + y * y / 1.2 <= 1) put(cx + x, cyr + y, '@', hsl(36, 92, 52 + 4 * Math.sin(t * 3)));
+    }
+
+    // rose
+    const pulse = t > 11.8 ? 1 + 0.02 * Math.pow(Math.max(0, Math.sin((t - 11.8) * Math.PI * 2 / 1.4)), 2) * clamp(t - 11.8) : 1;
+    oc.clearRect(0, 0, off.width, off.height);
+    roseDrawn = false;
+    for (const r of roses) {
+      const g = r.g || 0;
+      if (g <= 0.04) continue;
+      const [cx, cy] = bez(r, Math.min(g, 1));
+      const b = clamp((t - (r.st + r.dur * 0.78)) / 4.4);
+      const eb = 1 - Math.pow(1 - b, 2.2);
+      vecRose(r, cx, cy - (g < 1 ? 0.5 * S : 0), eb, clamp(g * 3), t, pulse);
+    }
+    if (roseDrawn) rasterRoses();
+
+    // petali che cadono
+    for (const p of petals) {
+      if (t < p.start) continue;
+      const y = ((t - p.start) * p.speed) % (ROWS + 6) - 3;
+      const x = p.x0 + p.sway * Math.sin(t * 0.9 + p.ph);
+      put(x, y, p.ch, hsl(p.hue, 80, p.hue === 45 ? 78 : 68, 0.9));
+    }
+
+    glow.style.opacity = (clamp(t / 9) * (0.85 + 0.1 * Math.sin(t * 1.3))).toFixed(3);
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cv.width / dpr, cv.height / dpr);
+    ctx.font = `${(cw / 0.6).toFixed(2)}px ${FONT}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const fy = chh * 0.04;
+    for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+      const i = y * COLS + x, c = gc[i];
+      if (!c || c === ' ') continue;
+      ctx.fillStyle = gk[i];
+      ctx.fillText(c, (x + 0.5) * cw, (y + 0.5) * chh + fy);
+    }
+  }
+
+  // ---------- messaggio ----------
+  let timers = [], textStarted = false;
+  function startText() {
+    textStarted = true;
+    msg.innerHTML = ''; msg.classList.remove('go');
+    const words = TEXT.split(' ');
+    let i = 0, lastWord = null;
+    words.forEach((w, wi) => {
+      const ws = document.createElement('span'); ws.className = 'w';
+      for (const chr of w) {
+        const s = document.createElement('span'); s.className = 'l'; s.textContent = chr;
+        s.style.transitionDelay = (i * 85) + 'ms'; ws.appendChild(s); i++;
+      }
+      msg.appendChild(ws);
+      if (wi < words.length - 1) msg.appendChild(document.createTextNode(' '));
+      lastWord = ws;
+    });
+    const h = document.createElement('span'); h.className = 'l h'; h.textContent = '\u2764\uFE0F';
+    h.style.transitionDelay = (i * 85 + 380) + 'ms'; lastWord.appendChild(h);
+    requestAnimationFrame(() => requestAnimationFrame(() => msg.classList.add('go')));
+    timers.push(setTimeout(() => h.classList.add('beating'), i * 85 + 380 + 1000));
+  }
+
+  // ---------- ciclo ----------
+  const params = new URLSearchParams(location.search);
+  const frozen = params.has('t') ? parseFloat(params.get('t')) : null;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let t0 = performance.now();
+
+  function reset() {
+    timers.forEach(clearTimeout); timers = [];
+    msg.innerHTML = ''; msg.classList.remove('go');
+    btn.classList.remove('show'); textStarted = false;
+    t0 = performance.now();
+  }
+  btn.addEventListener('click', reset);
+
+  function frame(now) {
+    const t = frozen !== null ? frozen : reduce ? 30 : (now - t0) / 1000;
+    scene(t); draw();
+    if (t >= T_TEXT && !textStarted) startText();
+    if (t >= T_REPLAY) btn.classList.add('show');
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
